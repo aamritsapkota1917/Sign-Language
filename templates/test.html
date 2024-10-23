@@ -1,0 +1,222 @@
+<html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Language Detection</title>
+    <style>
+        
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container{
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            align-items: center;
+
+        }
+        video {
+            width: 80vw;
+            height: 50vh;
+            margin-bottom: 20px;
+            border: 2px solid   black;
+            background-color: grey;
+            max-width: 640px;
+            max-height: 480px;
+        }
+        button {
+            background:#71c55d ;
+            color: white;
+            font:bolder;
+            border: 10px white;
+            border-radius: 15px;
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 0 10px;
+            cursor: pointer;
+            
+        }
+
+        button.delete{
+            background: red;
+        }
+
+        button:hover{
+            transition: background-color 0.5s ease;
+            background-color:#89e373;
+            
+        }
+        
+        .controls{
+            display: flex;
+            flex-direction: row;
+            justify-content: space-around;
+            align-items: center;
+        }
+        .screen{
+            width: 800px;
+            height: 100px;
+            border: 2px solid black;
+            background-color: black;
+            color: red;
+            margin-top: 20px;
+            padding: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 10px;
+            font-size: 35px;
+        }
+
+        .button-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start; /* Align items to the start */
+            gap: 10px; /* Gap between buttons */
+        }
+
+        @media(max-width: 787px){
+            body{
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sign Language Detection</h1>
+        <video id="videoElement" width="640" height="480" autoplay></video>
+        <div class="controls">
+            <button id="startButton">Start Capture</button>
+            <button id="stopButton">Stop Capture</button>
+        </div>
+    </div>
+    <div class="screen"></div>
+    <div class="button-container">
+        <button class="delete" onclick="deleteLastLetter()">X</button>
+        <button onclick="addSpace()">Space</button>
+        <button onclick="clearScreen()">Clear Screen</button>
+
+    </div>
+    <script>
+
+function getCookie(name) {//////csrf fetch garxa cookies bata .
+        var cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            var cookies = document.cookie.split(';');
+            for (var i = 0; i < cookies.length; i++) {
+                var cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+        const videoElement = document.getElementById('videoElement');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        let stream;
+        let intervalId;
+
+        startButton.addEventListener('click', startCapture);
+        stopButton.addEventListener('click', stopCapture);
+
+        async function startCapture() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                videoElement.srcObject = stream;
+                intervalId = setInterval(captureAndSendFrame, 200); // Capture and send frame every second
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+            }
+        }
+
+        function stopCapture() {
+            if (stream) {
+                const tracks = stream.getTracks();
+                tracks.forEach(track => track.stop());
+                videoElement.srcObject = null;
+                clearInterval(intervalId);
+            }
+        }
+
+        let lastDetectedGesture = '';
+        let detectedWord = '';
+
+
+        function showOutput(data) {
+            let screen = document.querySelector('.screen');
+            let detectedGesture = data.detected_gesture;
+
+            if (detectedGesture !== 'Error') {
+                if (detectedGesture !== lastDetectedGesture) { // Only update if new gesture is different
+                    detectedWord += detectedGesture; // Append detected gesture to the word
+                    screen.innerText = detectedWord;
+                    lastDetectedGesture = detectedGesture; // Update last detected gesture
+                }
+            } else {
+                console.error('Error detecting gesture.');
+            }
+        }
+
+        
+        function clearScreen() {
+            let screen = document.querySelector('.screen');
+            detectedWord = '';
+            screen.innerText = '';
+        }
+        function deleteLastLetter() {
+            let screen = document.querySelector('.screen');
+            detectedWord = detectedWord.slice(0, -1); // Remove the last character from the word
+            screen.innerText = detectedWord;
+        }
+        function addSpace() {
+            let screen = document.querySelector('.screen');
+            detectedWord += ' '; // Add a space to the word
+            screen.innerText = detectedWord;
+        }
+
+
+
+        async function captureAndSendFrame() {
+            const canvas = document.createElement('canvas');
+            canvas.width = videoElement.videoWidth;
+            canvas.height = videoElement.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+            const imageData = canvas.toDataURL('image/jpeg');
+            
+            // Send captured frame to Django server via AJAX
+            try {
+                let csrfToken = getCookie('csrftoken');//csrf token pani pathauna parxa
+                console.log(csrfToken);
+                const response = await fetch('/api/detect', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken,//csrf header ma haleko
+                    },
+                    body: JSON.stringify({ image_data: imageData })
+                });
+                if (!response.ok) {
+                    throw new Error('Server responded with error');
+                }
+                const data = await response.json();
+                // console.log(data)
+                showOutput(data);
+                console.log('Response from server:', data);
+            } catch (err) {
+                console.error('Error sending frame to server:', err);
+            }
+        }
+    </script>
+</body>
+</html>
